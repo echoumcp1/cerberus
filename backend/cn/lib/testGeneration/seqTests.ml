@@ -3,7 +3,9 @@ module A = CF.AilSyntax
 module C = CF.Ctype
 module Utils = Executable_spec_utils
 module Config = SeqTestGenConfig
-module SymSet = Set.Make (Sym)
+(* module SymSet = Set.Make (Sym) *)
+
+type context = (Sym.t option * C.ctype * Sym.t * Pp.document list) list
 
 type test_stats =
   { successes : int;
@@ -43,34 +45,32 @@ let rec ty_eq (ty1 : C.ctype) (ty2 : C.ctype) : bool =
 
 
 let callable
-  (ctx : (Sym.t * C.ctype) list)
+  (ctx : context)
   ((_, (_, args)) : Sym.t * ((C.qualifiers * C.ctype) * (Sym.t * C.ctype) list))
   : bool
   =
   List.for_all
-    (fun x -> x)
-    (List.map
-       (fun (_, (ty : C.ctype)) ->
+    (fun (_, (ty : C.ctype)) ->
+      (match ty with
+       | Ctype (_, ty) ->
          (match ty with
-          | Ctype (_, ty) ->
-            (match ty with
-             | Basic (Integer Char)
-             | Basic (Integer Bool)
-             | Basic (Integer (Signed _))
-             | Basic (Integer (Unsigned _))
-             | Basic (Floating _)
-             | Void ->
-               true
-             | Pointer (_, ty) -> List.exists (fun (_, ct) -> ty_eq ty ct) ctx
-             | _ -> false))
-         || List.exists (fun (_, ct) -> ty_eq ty ct) ctx)
-       args)
+          | Basic (Integer Char)
+          | Basic (Integer Bool)
+          | Basic (Integer (Signed _))
+          | Basic (Integer (Unsigned _))
+          | Basic (Floating _)
+          | Void ->
+            true
+          | Pointer (_, ty) -> List.exists (fun (_, ct, _, _) -> ty_eq ty ct) ctx
+          | _ -> false))
+      || List.exists (fun (_, ct, _, _) -> ty_eq ty ct) ctx)
+    args
 
 
-let calc_score (ctx : (Sym.t * C.ctype) list) (args : (Sym.t * C.ctype) list) : int =
+let calc_score (ctx : context) (args : (Sym.t * C.ctype) list) : int =
   List.fold_left
     (fun acc (_, ty) ->
-      if List.exists (fun (_, ct) -> ty_eq ty ct) ctx then
+      if List.exists (fun (_, ct, _, _) -> ty_eq ty ct) ctx then
         acc + 10
       else
         acc)
@@ -78,17 +78,23 @@ let calc_score (ctx : (Sym.t * C.ctype) list) (args : (Sym.t * C.ctype) list) : 
     args
 
 
-let ctx_to_string (ctx : (Sym.t * C.ctype) list) : string =
+let ctx_to_string (ctx : context) : string =
   List.fold_left
-    ( ^ )
+    (fun acc (name, ty, _, _) ->
+      match name with
+      | Some name ->
+        acc
+        ^ "("
+        ^ Sym.pp_string name
+        ^ ":"
+        ^ CF.String_core_ctype.string_of_ctype ty
+        ^ ")"
+      | None -> "")
     ""
-    (List.map
-       (fun (name, ty) ->
-         "(" ^ Sym.pp_string name ^ ":" ^ CF.String_core_ctype.string_of_ctype ty ^ ")")
-       ctx)
+    ctx
 
 
-let gen_arg (ctx : (Sym.t * C.ctype) list) ((name, ty) : Sym.t * C.ctype) : Pp.document =
+let gen_arg (ctx : context) ((name, ty) : Sym.t * C.ctype) : Pp.document =
   let open Pp in
   let generated_base_ty =
     match ty with
@@ -103,25 +109,26 @@ let gen_arg (ctx : (Sym.t * C.ctype) list) ((name, ty) : Sym.t * C.ctype) : Pp.d
          [ int (if Random.int 2 = 1 then rand_int * -1 else rand_int) ]
        | Basic (Integer (Unsigned _)) -> [ int (Random.int 65536) ]
        | Basic (Floating _) -> [ string (string_of_float (Random.float 65536.0)) ]
-       | Void -> [ empty ]
        | _ -> [])
   in
   let prev_call =
     let prev_calls =
       List.filter
-        (fun (_, ct) ->
-          ty_eq ty ct
+        (fun (name, ct, _, _) ->
+          (Option.is_some name && ty_eq ty ct)
           || match ty with Ctype (_, Pointer (_, ty)) -> ty_eq ty ct | _ -> false)
         ctx
     in
     match List.length prev_calls with
     | 0 -> []
     | n ->
-      let name, ty' = List.nth prev_calls (Random.int n) in
-      if not (ty_eq ty' ty) then (* only way they're not directly equal is if pointer*)
-        [ string "&" ^^ Sym.pp name ]
-      else
-        [ Sym.pp name ]
+      (match List.nth prev_calls (Random.int n) with
+       | Some name, ty', _, _ ->
+         if not (ty_eq ty' ty) then (* only way they're not directly equal is if pointer*)
+           [ string "&" ^^ Sym.pp name ]
+         else
+           [ Sym.pp name ]
+       | None, _, _, _ -> failwith "impossible case")
   in
   let options = List.append generated_base_ty prev_call in
   match List.length options with
@@ -167,6 +174,31 @@ let create_test_file
         ^^ hardline)
 
 
+let rec get_violation_line test_output =
+  let violation_regex = Str.regexp {| +\^~+ .+\.c:\([0-9]+\):[0-9]+-[0-9]+|} in
+  match test_output with
+  | [] -> 0
+  | line :: lines ->
+    if Str.string_match violation_regex line 0 then
+      int_of_string (Str.matched_group 1 line)
+    else
+      get_violation_line lines
+
+
+let rec is_precond_violation code =
+  let is_post_regex = Str.regexp {|[ \t]*\(/\*@\)?[ \t]*ensures|} in
+  let is_pre_regex = Str.regexp {|[ \t]*\(/\*@\)?[ \t]*requires|} in
+  match code with
+  | [] -> true
+  | line :: lines ->
+    if Str.string_match is_post_regex line 0 then
+      false
+    else if Str.string_match is_pre_regex line 0 then
+      true
+    else
+      is_precond_violation lines
+
+
 let out_to_list (command : string) =
   let chan = Unix.open_process_in command in
   let res = ref ([] : string list) in
@@ -185,7 +217,7 @@ let rec gen_sequence
   (funcs : (Sym.t * ((C.qualifiers * C.ctype) * (Sym.t * C.ctype) list)) list)
   (fuel : int)
   (stats : test_stats)
-  (ctx : (Sym.t * C.ctype) list)
+  (ctx : context)
   (prev : int)
   (seq_so_far : Pp.document)
   (output_dir : string)
@@ -204,7 +236,14 @@ let rec gen_sequence
   let open Pp in
   match fuel with
   | 0 ->
-    let unmap_stmts = List.map Ownership_exec.generate_c_local_ownership_exit ctx in
+    let unmap_stmts =
+      List.filter_map
+        (fun (name, ret, _, _) ->
+          match name with
+          | Some name -> Some (Ownership_exec.generate_c_local_ownership_exit (name, ret))
+          | None -> None)
+        ctx
+    in
     let unmap_str = hardline ^^ separate_map hardline stmt_to_doc unmap_stmts in
     Right (seq_so_far ^^ unmap_str ^^ hardline ^^ string "return 0;", stats)
   | n ->
@@ -214,36 +253,33 @@ let rec gen_sequence
         (List.filter (callable ctx) funcs)
     in
     let rec gen_test
-      (args_map : Sym.t * ((C.qualifiers * C.ctype) * (Sym.t * C.ctype) list))
+      (params_map : Sym.t * ((C.qualifiers * C.ctype) * (Sym.t * C.ctype) list))
       (retries_left : int)
-      : (SymSet.elt * C.ctype) list * int * (document, string * document) Either.either
+      : context * int * (document, string * document) Either.either
       =
       if retries_left = 0 then
         (ctx, prev, Either.Left empty)
       else (
-        match args_map with
-        | f, ((qualifiers, ret_ty), args) ->
-          let ctx', name, assign, prev =
+        match params_map with
+        | f, ((qualifiers, ret_ty), params) ->
+          let name, assign, prev =
             match ret_ty with
             | Ctype (_, Void) ->
-              (ctx, None, empty, prev)
+              (None, empty, prev)
               (* attempted to use fresh_cn but did not work for some reason?*)
             | _ ->
               let name = Sym.fresh_named ("x" ^ string_of_int prev) in
-              ( (name, ret_ty) :: ctx,
-                Some name,
+              ( Some name,
                 separate
                   space
                   [ CF.Pp_ail.pp_ctype qualifiers ret_ty; Sym.pp name; equals ],
                 prev + 1 )
           in
+          let args = List.map (gen_arg ctx) params in
           let curr_test =
             assign
             ^^ Sym.pp f
-            ^^ parens
-                 (separate
-                    (comma ^^ space)
-                    [ separate_map (comma ^^ space) (gen_arg ctx) args ])
+            ^^ parens (separate (comma ^^ space) [ separate (comma ^^ space) args ])
             ^^ semi
             ^^ hardline
             ^^
@@ -255,39 +291,15 @@ let rec gen_sequence
                    (Ownership_exec.generate_c_local_ownership_entry_fcall (name, ret_ty)))
               ^^ hardline
           in
-          let _ =
-            save
-              output_dir
-              (filename_base ^ "_test.c")
-              (create_test_file (seq_so_far ^^ curr_test) filename_base fun_decls)
-          in
+          save
+            output_dir
+            (filename_base ^ "_test.c")
+            (create_test_file (seq_so_far ^^ curr_test) filename_base fun_decls);
           let output, status = out_to_list (output_dir ^ "/run_tests.sh") in
+          let ctx' = (name, ret_ty, f, args) :: ctx in
           (match status with
            | WEXITED 0 -> (ctx', prev, Either.Right (Sym.pp_string f, curr_test))
            | _ ->
-             let violation_regex = Str.regexp {| +\^~+ .+\.c:\([0-9]+\):[0-9]+-[0-9]+|} in
-             let is_post_regex = Str.regexp {|[ \t]*\(/\*@\)?[ \t]*ensures|} in
-             let is_pre_regex = Str.regexp {|[ \t]*\(/\*@\)?[ \t]*requires|} in
-             let rec get_violation_line test_output =
-               match test_output with
-               | [] -> 0
-               | line :: lines ->
-                 if Str.string_match violation_regex line 0 then
-                   int_of_string (Str.matched_group 1 line)
-                 else
-                   get_violation_line lines
-             in
-             let rec is_precond_violation code =
-               match code with
-               | [] -> true
-               | line :: lines ->
-                 if Str.string_match is_post_regex line 0 then
-                   false
-                 else if Str.string_match is_pre_regex line 0 then
-                   true
-                 else
-                   is_precond_violation lines
-             in
              let drop n l =
                (* ripped from OCaml 5.3 *)
                let rec aux i = function
@@ -343,7 +355,13 @@ let rec gen_sequence
               && n >= instr_per_test
             then (
               let unmap_stmts =
-                List.map Ownership_exec.generate_c_local_ownership_exit ctx'
+                List.filter_map
+                  (fun (name, ret, _, _) ->
+                    match name with
+                    | Some name ->
+                      Some (Ownership_exec.generate_c_local_ownership_exit (name, ret))
+                    | None -> None)
+                  ctx
               in
               ( [],
                 hardline
