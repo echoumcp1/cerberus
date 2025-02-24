@@ -1,5 +1,6 @@
 ; mostly generated with with the command:
 ; [find * -type f -exec echo "  ({} as runtime/{})" \; >> dune]
+
 (install
  (files
   (bmc/rc11.cat as runtime/bmc/rc11.cat)
@@ -57,31 +58,45 @@
   (libc/include/posix/utime.h as runtime/libc/include/posix/utime.h)
   (libc/include/posix/ulimit.h as runtime/libc/include/posix/ulimit.h)
   (libc/include/posix/regex.h as runtime/libc/include/posix/regex.h)
-  (libc/include/posix/netinet/in.h as runtime/libc/include/posix/netinet/in.h)
-  (libc/include/posix/netinet/tcp.h as runtime/libc/include/posix/netinet/tcp.h)
+  (libc/include/posix/netinet/in.h
+   as
+   runtime/libc/include/posix/netinet/in.h)
+  (libc/include/posix/netinet/tcp.h
+   as
+   runtime/libc/include/posix/netinet/tcp.h)
   (libc/include/posix/cpio.h as runtime/libc/include/posix/cpio.h)
   (libc/include/posix/inttypes.h as runtime/libc/include/posix/inttypes.h)
   (libc/include/posix/math.h as runtime/libc/include/posix/math.h)
   (libc/include/posix/dirent.h as runtime/libc/include/posix/dirent.h)
   (libc/include/posix/sys/ipc.h as runtime/libc/include/posix/sys/ipc.h)
   (libc/include/posix/sys/ioctl.h as runtime/libc/include/posix/sys/ioctl.h)
-  (libc/include/posix/sys/socket.h as runtime/libc/include/posix/sys/socket.h)
+  (libc/include/posix/sys/socket.h
+   as
+   runtime/libc/include/posix/sys/socket.h)
   (libc/include/posix/sys/cdefs.h as runtime/libc/include/posix/sys/cdefs.h)
   (libc/include/posix/sys/uio.h as runtime/libc/include/posix/sys/uio.h)
   (libc/include/posix/sys/un.h as runtime/libc/include/posix/sys/un.h)
   (libc/include/posix/sys/times.h as runtime/libc/include/posix/sys/times.h)
   (libc/include/posix/sys/wait.h as runtime/libc/include/posix/sys/wait.h)
   (libc/include/posix/sys/time.h as runtime/libc/include/posix/sys/time.h)
-  (libc/include/posix/sys/resource.h as runtime/libc/include/posix/sys/resource.h)
+  (libc/include/posix/sys/resource.h
+   as
+   runtime/libc/include/posix/sys/resource.h)
   (libc/include/posix/sys/msg.h as runtime/libc/include/posix/sys/msg.h)
   (libc/include/posix/sys/shm.h as runtime/libc/include/posix/sys/shm.h)
   (libc/include/posix/sys/stat.h as runtime/libc/include/posix/sys/stat.h)
   (libc/include/posix/sys/types.h as runtime/libc/include/posix/sys/types.h)
-  (libc/include/posix/sys/select.h as runtime/libc/include/posix/sys/select.h)
+  (libc/include/posix/sys/select.h
+   as
+   runtime/libc/include/posix/sys/select.h)
   (libc/include/posix/sys/mman.h as runtime/libc/include/posix/sys/mman.h)
   (libc/include/posix/sys/sem.h as runtime/libc/include/posix/sys/sem.h)
-  (libc/include/posix/sys/statvfs.h as runtime/libc/include/posix/sys/statvfs.h)
-  (libc/include/posix/sys/utsname.h as runtime/libc/include/posix/sys/utsname.h)
+  (libc/include/posix/sys/statvfs.h
+   as
+   runtime/libc/include/posix/sys/statvfs.h)
+  (libc/include/posix/sys/utsname.h
+   as
+   runtime/libc/include/posix/sys/utsname.h)
   (libc/include/posix/pthread.h as runtime/libc/include/posix/pthread.h)
   (libc/include/posix/fcntl.h as runtime/libc/include/posix/fcntl.h)
   (libc/include/posix/arpa/inet.h as runtime/libc/include/posix/arpa/inet.h)
@@ -142,15 +157,18 @@
   (libc/src/time.c as runtime/libc/src/time.c)
   (libc/generators/gen_inttypes.c as runtime/libc/generators/gen_inttypes.c)
   (libcore/std.core as runtime/libcore/std.core)
-  (libcore/std_inner_arg_temps.core as runtime/libcore/std_inner_arg_temps.core)
-  (libcore/impls/i686-apple-darwin10-gcc-4.2.1.impl as
+  (libcore/std_inner_arg_temps.core
+   as
+   runtime/libcore/std_inner_arg_temps.core)
+  (libcore/impls/i686-apple-darwin10-gcc-4.2.1.impl
+   as
    runtime/libcore/impls/i686-apple-darwin10-gcc-4.2.1.impl)
-  (libcore/impls/gcc_4.9.0_x86_64-apple-darwin10.8.0.impl as
+  (libcore/impls/gcc_4.9.0_x86_64-apple-darwin10.8.0.impl
+   as
    runtime/libcore/impls/gcc_4.9.0_x86_64-apple-darwin10.8.0.impl))
  (section lib)
  (package cerberus))
 
-
 (install
  (files
   (bmc/rc11.cat as runtime/bmc/rc11.cat)
@@ -208,31 +226,45 @@
   (libc/include/posix/utime.h as runtime/libc/include/posix/utime.h)
   (libc/include/posix/ulimit.h as runtime/libc/include/posix/ulimit.h)
   (libc/include/posix/regex.h as runtime/libc/include/posix/regex.h)
-  (libc/include/posix/netinet/in.h as runtime/libc/include/posix/netinet/in.h)
-  (libc/include/posix/netinet/tcp.h as runtime/libc/include/posix/netinet/tcp.h)
+  (libc/include/posix/netinet/in.h
+   as
+   runtime/libc/include/posix/netinet/in.h)
+  (libc/include/posix/netinet/tcp.h
+   as
+   runtime/libc/include/posix/netinet/tcp.h)
   (libc/include/posix/cpio.h as runtime/libc/include/posix/cpio.h)
   (libc/include/posix/inttypes.h as runtime/libc/include/posix/inttypes.h)
   (libc/include/posix/math.h as runtime/libc/include/posix/math.h)
   (libc/include/posix/dirent.h as runtime/libc/include/posix/dirent.h)
   (libc/include/posix/sys/ipc.h as runtime/libc/include/posix/sys/ipc.h)
   (libc/include/posix/sys/ioctl.h as runtime/libc/include/posix/sys/ioctl.h)
-  (libc/include/posix/sys/socket.h as runtime/libc/include/posix/sys/socket.h)
+  (libc/include/posix/sys/socket.h
+   as
+   runtime/libc/include/posix/sys/socket.h)
   (libc/include/posix/sys/cdefs.h as runtime/libc/include/posix/sys/cdefs.h)
   (libc/include/posix/sys/uio.h as runtime/libc/include/posix/sys/uio.h)
   (libc/include/posix/sys/un.h as runtime/libc/include/posix/sys/un.h)
   (libc/include/posix/sys/times.h as runtime/libc/include/posix/sys/times.h)
   (libc/include/posix/sys/wait.h as runtime/libc/include/posix/sys/wait.h)
   (libc/include/posix/sys/time.h as runtime/libc/include/posix/sys/time.h)
-  (libc/include/posix/sys/resource.h as runtime/libc/include/posix/sys/resource.h)
+  (libc/include/posix/sys/resource.h
+   as
+   runtime/libc/include/posix/sys/resource.h)
   (libc/include/posix/sys/msg.h as runtime/libc/include/posix/sys/msg.h)
   (libc/include/posix/sys/shm.h as runtime/libc/include/posix/sys/shm.h)
   (libc/include/posix/sys/stat.h as runtime/libc/include/posix/sys/stat.h)
   (libc/include/posix/sys/types.h as runtime/libc/include/posix/sys/types.h)
-  (libc/include/posix/sys/select.h as runtime/libc/include/posix/sys/select.h)
+  (libc/include/posix/sys/select.h
+   as
+   runtime/libc/include/posix/sys/select.h)
   (libc/include/posix/sys/mman.h as runtime/libc/include/posix/sys/mman.h)
   (libc/include/posix/sys/sem.h as runtime/libc/include/posix/sys/sem.h)
-  (libc/include/posix/sys/statvfs.h as runtime/libc/include/posix/sys/statvfs.h)
-  (libc/include/posix/sys/utsname.h as runtime/libc/include/posix/sys/utsname.h)
+  (libc/include/posix/sys/statvfs.h
+   as
+   runtime/libc/include/posix/sys/statvfs.h)
+  (libc/include/posix/sys/utsname.h
+   as
+   runtime/libc/include/posix/sys/utsname.h)
   (libc/include/posix/pthread.h as runtime/libc/include/posix/pthread.h)
   (libc/include/posix/fcntl.h as runtime/libc/include/posix/fcntl.h)
   (libc/include/posix/arpa/inet.h as runtime/libc/include/posix/arpa/inet.h)
@@ -293,9 +325,11 @@
   (libc/src/time.c as runtime/libc/src/time.c)
   (libc/generators/gen_inttypes.c as runtime/libc/generators/gen_inttypes.c)
   (libcore/std.core as runtime/libcore/std.core)
-  (libcore/impls/i686-apple-darwin10-gcc-4.2.1.impl as
+  (libcore/impls/i686-apple-darwin10-gcc-4.2.1.impl
+   as
    runtime/libcore/impls/i686-apple-darwin10-gcc-4.2.1.impl)
-  (libcore/impls/gcc_4.9.0_x86_64-apple-darwin10.8.0.impl as
+  (libcore/impls/gcc_4.9.0_x86_64-apple-darwin10.8.0.impl
+   as
    runtime/libcore/impls/gcc_4.9.0_x86_64-apple-darwin10.8.0.impl))
  (section lib)
  (package cerberus-cheri))

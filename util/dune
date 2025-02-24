@@ -4,15 +4,19 @@
  (synopsis "Cerberus util library")
  (modules :standard)
  (wrapped false)
- (foreign_stubs (language c) (names cerberus_cstubs))
+ (foreign_stubs
+  (language c)
+  (names cerberus_cstubs))
  (libraries unix str lem pprint yojson))
 
 (rule
  (target n1570.ml)
  (deps ../tools/n1570.json)
  (action
-  (with-stdout-to n1570.ml (progn
-   (echo "let data : Yojson.Basic.t Lazy.t =\n")
-   (echo "  lazy (Yojson.Basic.from_string  {json|\n")
-   (cat ../tools/n1570.json)
-   (echo "\n|json})")))))
+  (with-stdout-to
+   n1570.ml
+   (progn
+    (echo "let data : Yojson.Basic.t Lazy.t =\n")
+    (echo "  lazy (Yojson.Basic.from_string  {json|\n")
+    (cat ../tools/n1570.json)
+    (echo "\n|json})")))))

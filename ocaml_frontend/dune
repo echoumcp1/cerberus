@@ -4,8 +4,16 @@
  (name cerb_frontend)
  (public_name cerberus-lib.frontend)
  (synopsis "Cerberus frontend")
- (flags (:standard -w @8@11@12-9-27-33-67))
- (modules :standard \ pp_naive_memory pp_symbolic pp_constraints pp_cmm pp_sb)
+ (flags
+  (:standard -w @8@11@12-9-27-33-67))
+ (modules
+  :standard
+  \
+  pp_naive_memory
+  pp_symbolic
+  pp_constraints
+  pp_cmm
+  pp_sb)
  (virtual_modules impl_mem)
  (libraries unix lem pprint cerb_util sibylfs))
 
@@ -13,6 +21,7 @@
  (targets version.ml)
  (deps (universe))
  (action
-  (with-stdout-to version.ml
-    (run ocaml -I +unix unix.cma %{dep:../tools/gen_version.ml})))
+  (with-stdout-to
+   version.ml
+   (run ocaml -I +unix unix.cma %{dep:../tools/gen_version.ml})))
  (mode fallback))

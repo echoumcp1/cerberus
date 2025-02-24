@@ -3,5 +3,4 @@
  (name Morello)
  (package cerberus-cheri)
  (modules CapabilitiesGS MorelloCapsGS)
- (theories Common CheriCaps SailStdpp stdpp)
-)
+ (theories Common CheriCaps SailStdpp stdpp))

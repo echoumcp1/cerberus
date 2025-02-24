@@ -5,14 +5,19 @@ module Utils = Executable_spec_utils
 module Config = SeqTestGenConfig
 (* module SymSet = Set.Make (Sym) *)
 
-type context = (Sym.t option * C.ctype * Sym.t * Pp.document list) list
+type call = Sym.t option * C.ctype * Sym.t * string list
+
+type context = call list
 
 type test_stats =
   { successes : int;
     failures : int;
     skipped : int;
+    discarded : int;
     distrib : (string * int) list
   }
+
+let no_qs : C.qualifiers = { const = false; restrict = false; volatile = false }
 
 let save ?(perm = 0o666) (output_dir : string) (filename : string) (doc : Pp.document)
   : unit
@@ -80,7 +85,7 @@ let calc_score (ctx : context) (args : (Sym.t * C.ctype) list) : int =
 
 let ctx_to_string (ctx : context) : string =
   List.fold_left
-    (fun acc (name, ty, _, _) ->
+    (fun acc (name, ty, f, _) ->
       match name with
       | Some name ->
         acc
@@ -89,34 +94,38 @@ let ctx_to_string (ctx : context) : string =
         ^ ":"
         ^ CF.String_core_ctype.string_of_ctype ty
         ^ ")"
-      | None -> "")
-    ""
+      | None -> 
+        acc ^ 
+        "(void:"
+        ^ Sym.pp_string f 
+        ^
+        ")")
+    "\n"
     ctx
 
 
-let gen_arg (ctx : context) ((name, ty) : Sym.t * C.ctype) : Pp.document =
-  let open Pp in
+let gen_arg (ctx : context) ((name, ty) : Sym.t * C.ctype) : string =
   let generated_base_ty =
     match ty with
     | Ctype (_, ty1) ->
       (match ty1 with
        | Basic (Integer Char) ->
-         [ string "\'" ^^ char (char_of_int (Random.int 96 + 32)) ^^ string "\'" ]
-       | Basic (Integer Bool) ->
-         [ (if Random.int 2 = 1 then string "true" else string "false") ]
+         [ "\'" ^ String.make 1 (char_of_int (Random.int 96 + 32)) ^ "\'" ]
+       | Basic (Integer Bool) -> [ (if Random.int 2 = 1 then "true" else "false") ]
        | Basic (Integer (Signed _)) ->
          let rand_int = Random.int 32767 in
-         [ int (if Random.int 2 = 1 then rand_int * -1 else rand_int) ]
-       | Basic (Integer (Unsigned _)) -> [ int (Random.int 65536) ]
-       | Basic (Floating _) -> [ string (string_of_float (Random.float 65536.0)) ]
+         [ string_of_int (if Random.int 2 = 1 then rand_int * -1 else rand_int) ]
+       | Basic (Integer (Unsigned _)) -> [ string_of_int (Random.int 65536) ]
+       | Basic (Floating _) -> [ string_of_float (Random.float 65536.0) ]
        | _ -> [])
   in
   let prev_call =
     let prev_calls =
       List.filter
         (fun (name, ct, _, _) ->
-          (Option.is_some name && ty_eq ty ct)
-          || match ty with Ctype (_, Pointer (_, ty)) -> ty_eq ty ct | _ -> false)
+          Option.is_some name
+          && (ty_eq ty ct
+              || match ty with Ctype (_, Pointer (_, ty)) -> ty_eq ty ct | _ -> false))
         ctx
     in
     match List.length prev_calls with
@@ -125,9 +134,9 @@ let gen_arg (ctx : context) ((name, ty) : Sym.t * C.ctype) : Pp.document =
       (match List.nth prev_calls (Random.int n) with
        | Some name, ty', _, _ ->
          if not (ty_eq ty' ty) then (* only way they're not directly equal is if pointer*)
-           [ string "&" ^^ Sym.pp name ]
+           [ "&" ^ Sym.pp_string name ]
          else
-           [ Sym.pp name ]
+           [ Sym.pp_string name ]
        | None, _, _, _ -> failwith "impossible case")
   in
   let options = List.append generated_base_ty prev_call in
@@ -213,6 +222,107 @@ let out_to_list (command : string) =
     (!res, status)
 
 
+let test_to_doc (name : Sym.t option) (ret_ty : C.ctype) (f : Sym.t) (args : string list)
+  : Pp.document
+  =
+  let open Pp in
+  let f_call =
+    Sym.pp f
+    ^^ parens
+         (separate (comma ^^ space) [ separate (comma ^^ space) (List.map string args) ])
+    ^^ semi
+    ^^ hardline
+  in
+  match name with
+  | Some name ->
+    separate space [ CF.Pp_ail.pp_ctype no_qs ret_ty; Sym.pp name; equals ]
+    ^^ f_call
+    ^^ stmt_to_doc
+         (A.AilSexpr
+            (Ownership_exec.generate_c_local_ownership_entry_fcall (name, ret_ty)))
+    ^^ hardline
+  | None -> f_call
+
+
+let drop n l =
+  (* ripped from OCaml 5.3 *)
+  let rec aux i = function _x :: l when i < n -> aux (i + 1) l | rest -> rest in
+  if n < 0 then invalid_arg "List.drop";
+  aux 0 l
+
+
+let ctx_to_tests =
+  let open Pp in
+  separate_map empty (fun (name, ret_ty, f, args) -> test_to_doc name ret_ty f args)
+
+
+let shrink
+  (seq : context)
+  (output_dir : string)
+  (filename_base : string)
+  (src_code : string list)
+  (fun_decls : Pp.document)
+  : int * Pp.document
+  =
+  let open Pp in
+  let name_eq (n1, _, _, _) (n2, _, _, _) =
+    match (n1, n2) with
+    | Some name1, Some name2 -> String.equal (Sym.pp_string name1) (Sym.pp_string name2)
+    | _ -> false
+  in
+  match seq with
+  | [] -> (0, empty)
+  | start :: seq ->
+    let rec dfs (visited : context) ((_, _, _, args) as node) : context =
+      if not (List.mem name_eq node visited) then (
+        let succs =
+          List.filter
+            (fun (name, _, _, _) ->
+              match name with
+              | None -> false
+              | Some name -> List.mem String.equal (Sym.pp_string name) args)
+            seq
+        in
+        List.fold_left dfs (node :: visited) succs)
+      else
+        visited
+    in
+    let reqs = dfs [] start in
+    (* print_string (ctx_to_string reqs); *)
+    let rec shrink_h ((prev, curr, next) : context * call * context) =
+      match next with
+      | [] -> curr :: prev
+      | h :: t ->
+        if List.mem name_eq curr reqs then
+          shrink_h (curr :: prev, h, t)
+        else (
+          let test_shrink = (List.rev next) @ prev in
+          save
+            output_dir
+            (filename_base ^ "_test.c")
+            (create_test_file
+               (ctx_to_tests test_shrink ^^ hardline ^^ string "return 123;")
+               filename_base
+               fun_decls);
+          let output, status = out_to_list (output_dir ^ "/run_tests.sh") in
+          match status with
+          | WEXITED 0 | WEXITED 1 ->
+            shrink_h (curr :: prev, h, t)
+            (* indicating no more bug (which means that call was part of the cause, or compiler error)*)
+          | _ ->
+            let violation_line_num = get_violation_line output in
+            if
+              is_precond_violation
+                (drop (List.length src_code - violation_line_num) src_code)
+            then
+              shrink_h (curr :: prev, h, t)
+            else
+              shrink_h (prev, h, t))
+    in
+    let shrunken = shrink_h ([], start, seq) in
+    (List.length seq - List.length shrunken, ctx_to_tests shrunken)
+
+
 let rec gen_sequence
   (funcs : (Sym.t * ((C.qualifiers * C.ctype) * (Sym.t * C.ctype) list)) list)
   (fuel : int)
@@ -253,84 +363,53 @@ let rec gen_sequence
         (List.filter (callable ctx) funcs)
     in
     let rec gen_test
-      (params_map : Sym.t * ((C.qualifiers * C.ctype) * (Sym.t * C.ctype) list))
+      ((f, ((_, ret_ty), params)) :
+        Sym.t * ((C.qualifiers * C.ctype) * (Sym.t * C.ctype) list))
       (retries_left : int)
       : context * int * (document, string * document) Either.either
       =
       if retries_left = 0 then
         (ctx, prev, Either.Left empty)
       else (
-        match params_map with
-        | f, ((qualifiers, ret_ty), params) ->
-          let name, assign, prev =
-            match ret_ty with
-            | Ctype (_, Void) ->
-              (None, empty, prev)
-              (* attempted to use fresh_cn but did not work for some reason?*)
-            | _ ->
-              let name = Sym.fresh_named ("x" ^ string_of_int prev) in
-              ( Some name,
-                separate
-                  space
-                  [ CF.Pp_ail.pp_ctype qualifiers ret_ty; Sym.pp name; equals ],
-                prev + 1 )
-          in
-          let args = List.map (gen_arg ctx) params in
-          let curr_test =
-            assign
-            ^^ Sym.pp f
-            ^^ parens (separate (comma ^^ space) [ separate (comma ^^ space) args ])
-            ^^ semi
-            ^^ hardline
-            ^^
-            match name with
-            | None -> empty
-            | Some name ->
-              stmt_to_doc
-                (A.AilSexpr
-                   (Ownership_exec.generate_c_local_ownership_entry_fcall (name, ret_ty)))
-              ^^ hardline
-          in
-          save
-            output_dir
-            (filename_base ^ "_test.c")
-            (create_test_file (seq_so_far ^^ curr_test) filename_base fun_decls);
-          let output, status = out_to_list (output_dir ^ "/run_tests.sh") in
-          let ctx' = (name, ret_ty, f, args) :: ctx in
-          (match status with
-           | WEXITED 0 -> (ctx', prev, Either.Right (Sym.pp_string f, curr_test))
-           | _ ->
-             let drop n l =
-               (* ripped from OCaml 5.3 *)
-               let rec aux i = function
-                 | _x :: l when i < n -> aux (i + 1) l
-                 | rest -> rest
-               in
-               if n < 0 then invalid_arg "List.drop";
-               aux 0 l
-             in
-             let violation_line_num = get_violation_line output in
-             if
-               is_precond_violation
-                 (drop (List.length src_code - violation_line_num) src_code)
-             then
-               gen_test
-                 (pick fs (Random.int (List.fold_left ( + ) 1 (List.map fst fs))))
-                 (retries_left - 1)
-             else
-               ( ctx',
-                 prev,
-                 Either.Left
-                   (string
-                      (Printf.sprintf
-                         "/* violation of post-condition at line number %d in %s \
-                          detected on this call: */"
-                         violation_line_num
-                         (filename_base ^ ".c"))
-                    ^^ hardline
-                    ^^ curr_test
-                    ^^ hardline
-                    ^^ string "return 123;") )))
+        let name, prev =
+          match ret_ty with
+          | Ctype (_, Void) ->
+            (None, prev) (* attempted to use fresh_cn but did not work for some reason?*)
+          | _ -> (Some (Sym.fresh_named ("x" ^ string_of_int prev)), prev + 1)
+        in
+        let args = List.map (gen_arg ctx) params in
+        let curr_test = test_to_doc name ret_ty f args in
+        save
+          output_dir
+          (filename_base ^ "_test.c")
+          (create_test_file (seq_so_far ^^ curr_test) filename_base fun_decls);
+        let output, status = out_to_list (output_dir ^ "/run_tests.sh") in
+        let ctx' = (name, ret_ty, f, args) :: ctx in
+        match status with
+        | WEXITED 0 -> (ctx', prev, Either.Right (Sym.pp_string f, curr_test))
+        | _ ->
+          let violation_line_num = get_violation_line output in
+          if
+            is_precond_violation
+              (drop (List.length src_code - violation_line_num) src_code)
+          then
+            gen_test
+              (pick fs (Random.int (List.fold_left ( + ) 1 (List.map fst fs))))
+              (retries_left - 1)
+          else
+            ( ctx',
+              prev,
+              Either.Left
+                (string
+                   (Printf.sprintf
+                      "/* violation of post-condition at line number %d in %s detected \
+                       on this call: */"
+                      violation_line_num
+                      (filename_base ^ ".c"))
+                 ^^ hardline
+                 ^^ curr_test
+                 ^^ hardline
+                 ^^ string "return 123;") ))
     in
     (match List.length fs with
      | 0 ->
@@ -357,11 +436,9 @@ let rec gen_sequence
               let unmap_stmts =
                 List.filter_map
                   (fun (name, ret, _, _) ->
-                    match name with
-                    | Some name ->
-                      Some (Ownership_exec.generate_c_local_ownership_exit (name, ret))
-                    | None -> None)
-                  ctx
+                    Option.bind name (fun name ->
+                      Some (Ownership_exec.generate_c_local_ownership_exit (name, ret))))
+                  ctx'
               in
               ( [],
                 hardline
@@ -381,7 +458,7 @@ let rec gen_sequence
             filename_base
             src_code
             fun_decls
-        | _, prev, Either.Left err ->
+        | ctx', prev, Either.Left err ->
           if is_empty err then
             gen_sequence
               funcs
@@ -394,8 +471,12 @@ let rec gen_sequence
               filename_base
               src_code
               fun_decls
-          else
-            Either.Left (seq_so_far ^^ err, { stats with failures = 1 })))
+          else (
+            let discarded, seq_so_far =
+              shrink ctx' output_dir filename_base src_code fun_decls
+            in
+            Either.Left
+              (seq_so_far ^^ hardline ^^ string "return 123;", { stats with discarded; failures = stats.failures + 1 }))))
 
 
 let compile_sequence
@@ -436,7 +517,7 @@ let compile_sequence
   gen_sequence
     args_map
     fuel
-    { successes = 0; failures = 0; skipped = 0; distrib = [] }
+    { successes = 0; failures = 0; skipped = 0; discarded = 0; distrib = [] }
     []
     0
     Pp.empty
@@ -487,8 +568,10 @@ let generate
           "Stats for nerds:\n\
            %d tests succeeded\n\
            POST-CONDITION VIOLATION DETECTED.\n\
+           %d tests discarded after shrinking.\n\
            See %s/%s for details"
           stats.successes
+          stats.discarded
           output_dir
           test_file )
     | Right (seq, stats) ->

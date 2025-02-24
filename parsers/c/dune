@@ -2,14 +2,17 @@
  (name c_parser)
  (public_name cerberus-lib.c_parser)
  (synopsis "C parser")
- (flags (:standard -w -27-32))
+ (flags
+  (:standard -w -27-32))
  (modules :standard)
  (wrapped false)
  (libraries menhirLib cerb_frontend))
 
 (ocamllex c_lexer)
+
 (menhir
- (flags (--external-tokens Tokens --explain --exn-carries-state))
+ (flags
+  (--external-tokens Tokens --explain --exn-carries-state))
  (modules c_parser))
 
 ;; integrating and checking .messages file
@@ -19,64 +22,70 @@
 ; it requires the completeness check to have been run
 
 (rule
-  (deps c_parser_error.check)
-  (action (with-stdout-to c_parser_error.ml
-    (run menhir
-      %{dep:c_parser.mly}
-      --compile-errors %{dep:c_parser_error.messages}))))
+ (deps c_parser_error.check)
+ (action
+  (with-stdout-to
+   c_parser_error.ml
+   (run
+    menhir
+    %{dep:c_parser.mly}
+    --compile-errors
+    %{dep:c_parser_error.messages}))))
 
 ; check completeness, i.e. every error state listed in the auto-generated file
 ; "c_parser_error.auto.messages" is also listed in programmer-provided
 ; "c_parser_error.messages"
 
 (rule
-  (with-outputs-to c_parser_error.check
-  (run menhir
-    %{dep:c_parser.mly}
-    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-    ;
-    ; If you're seeing this `cat  _build/default/parsers/c/c_parser_error.check`
-    ; Ignore the warnings (they are ambiguities in the ISO C spec)
-    ;
-    ; # Updating for new error states
-    ; ```
-    ; File "c_parser_error.auto.messages", line XXXX, characters 0-XX:
-    ; Error: this sentence leads to an error in state XXX.
-    ; No sentence that leads to this state exists in "c_parser_error.messages".
-    ; ```
-    ;
-    ; This means should run `make -f Makefile.messages complete` and then re-build.
-    ;
-    ; # Duplicate states
-    ; ```
-    ; Read XXXX sample input sentences and XXXX error messages.
-    ; File "c_parser_error.messages", line XXXX, characters 0-XX:
-    ; File "c_parser_error.messages", line XXXXX, characters 0-XX:
-    ; Error: these sentences both cause an error in state XXX.
-    ; ```
-    ;
-    ; Delete one of the lines, optional comments and error messages.
-    ;
-    ; # Not error states (syntax becomes more permissive)
-    ; ```
-    ; File "c_parser_error.messages", line XXXXX, characters 0-XX:
-    ; Error: this sentence does not end with a syntax error, as it should:
-    ; no syntax error occurs.
-    ;
-    ; Delete one of the lines, optional comments and error messages.
-    ;
-    ; # Something else
-    ; Please update this dune file with the right instructions after you figure it out.
-    ;
-    ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-    --compare-errors %{dep:c_parser_error.auto.messages}
-    --compare-errors %{dep:c_parser_error.messages})))
+ (with-outputs-to
+  c_parser_error.check
+  (run
+   menhir
+   %{dep:c_parser.mly}
+   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+   ;
+   ; If you're seeing this `cat  _build/default/parsers/c/c_parser_error.check`
+   ; Ignore the warnings (they are ambiguities in the ISO C spec)
+   ;
+   ; # Updating for new error states
+   ; ```
+   ; File "c_parser_error.auto.messages", line XXXX, characters 0-XX:
+   ; Error: this sentence leads to an error in state XXX.
+   ; No sentence that leads to this state exists in "c_parser_error.messages".
+   ; ```
+   ;
+   ; This means should run `make -f Makefile.messages complete` and then re-build.
+   ;
+   ; # Duplicate states
+   ; ```
+   ; Read XXXX sample input sentences and XXXX error messages.
+   ; File "c_parser_error.messages", line XXXX, characters 0-XX:
+   ; File "c_parser_error.messages", line XXXXX, characters 0-XX:
+   ; Error: these sentences both cause an error in state XXX.
+   ; ```
+   ;
+   ; Delete one of the lines, optional comments and error messages.
+   ;
+   ; # Not error states (syntax becomes more permissive)
+   ; ```
+   ; File "c_parser_error.messages", line XXXXX, characters 0-XX:
+   ; Error: this sentence does not end with a syntax error, as it should:
+   ; no syntax error occurs.
+   ;
+   ; Delete one of the lines, optional comments and error messages.
+   ;
+   ; # Something else
+   ; Please update this dune file with the right instructions after you figure it out.
+   ;
+   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+   --compare-errors
+   %{dep:c_parser_error.auto.messages}
+   --compare-errors
+   %{dep:c_parser_error.messages})))
 
 ; generate "c_parser_error.auto.messages" file used for completeness check above
 
 (rule
-  (with-stdout-to c_parser_error.auto.messages
-    (run menhir
-       %{dep:c_parser.mly}
-       --list-errors)))
-
+ (with-stdout-to
+  c_parser_error.auto.messages
+  (run menhir %{dep:c_parser.mly} --list-errors)))

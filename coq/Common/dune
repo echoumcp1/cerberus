@@ -3,5 +3,4 @@
  (name Common)
  (package cerberus-cheri)
  (modules SimpleError Utils FMapExt ZMap AMap)
- (theories ExtLib StructTact SailStdpp stdpp CheriCaps)
-)
+ (theories ExtLib StructTact SailStdpp stdpp CheriCaps))
