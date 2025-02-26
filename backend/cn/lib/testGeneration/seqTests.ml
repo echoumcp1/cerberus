@@ -5,7 +5,7 @@ module Utils = Executable_spec_utils
 module Config = SeqTestGenConfig
 (* module SymSet = Set.Make (Sym) *)
 
-type call = Sym.t option * C.ctype * Sym.t * string list
+type call = Sym.t option * C.ctype * Sym.t * (C.ctype * string) list
 
 type context = call list
 
@@ -94,12 +94,7 @@ let ctx_to_string (ctx : context) : string =
         ^ ":"
         ^ CF.String_core_ctype.string_of_ctype ty
         ^ ")"
-      | None -> 
-        acc ^ 
-        "(void:"
-        ^ Sym.pp_string f 
-        ^
-        ")")
+      | None -> acc ^ "(void:" ^ Sym.pp_string f ^ ")")
     "\n"
     ctx
 
@@ -222,14 +217,20 @@ let out_to_list (command : string) =
     (!res, status)
 
 
-let test_to_doc (name : Sym.t option) (ret_ty : C.ctype) (f : Sym.t) (args : string list)
+let test_to_doc
+  (name : Sym.t option)
+  (ret_ty : C.ctype)
+  (f : Sym.t)
+  (args : (C.ctype * string) list)
   : Pp.document
   =
   let open Pp in
   let f_call =
     Sym.pp f
     ^^ parens
-         (separate (comma ^^ space) [ separate (comma ^^ space) (List.map string args) ])
+         (separate
+            (comma ^^ space)
+            [ separate (comma ^^ space) (List.map (fun (_, arg) -> string arg) args) ])
     ^^ semi
     ^^ hardline
   in
@@ -275,12 +276,13 @@ let shrink
   | start :: seq ->
     let rec dfs (visited : context) ((_, _, _, args) as node) : context =
       if not (List.mem name_eq node visited) then (
+        let names = List.map (fun (_, name) -> name) args in
         let succs =
           List.filter
             (fun (name, _, _, _) ->
               match name with
               | None -> false
-              | Some name -> List.mem String.equal (Sym.pp_string name) args)
+              | Some name -> List.mem String.equal (Sym.pp_string name) names)
             seq
         in
         List.fold_left dfs (node :: visited) succs)
@@ -288,39 +290,48 @@ let shrink
         visited
     in
     let reqs = dfs [] start in
-    (* print_string (ctx_to_string reqs); *)
-    let rec shrink_h ((prev, curr, next) : context * call * context) =
-      match next with
-      | [] -> curr :: prev
-      | h :: t ->
-        if List.mem name_eq curr reqs then
-          shrink_h (curr :: prev, h, t)
-        else (
-          let test_shrink = (List.rev next) @ prev in
-          save
-            output_dir
-            (filename_base ^ "_test.c")
-            (create_test_file
-               (ctx_to_tests test_shrink ^^ hardline ^^ string "return 123;")
-               filename_base
-               fun_decls);
-          let output, status = out_to_list (output_dir ^ "/run_tests.sh") in
-          match status with
-          | WEXITED 0 | WEXITED 1 ->
-            shrink_h (curr :: prev, h, t)
-            (* indicating no more bug (which means that call was part of the cause, or compiler error)*)
-          | _ ->
-            let violation_line_num = get_violation_line output in
-            if
-              is_precond_violation
-                (drop (List.length src_code - violation_line_num) src_code)
-            then
-              shrink_h (curr :: prev, h, t)
-            else
-              shrink_h (prev, h, t))
+    let rec shrink_h ((prev, ((name, _, _, _) as curr), next) : context * call * context) =
+      if List.mem name_eq curr reqs then (
+        match next with [] -> curr :: prev | h :: t -> shrink_h (curr :: prev, h, t))
+      else (
+        let prev' =
+          match name with
+          | Some name ->
+            List.filter
+              (fun (_, _, _, args) ->
+                not
+                  (List.mem
+                     (fun name (_, var) -> String.equal (Sym.pp_string name) var)
+                     name
+                     args))
+              prev
+          | None -> prev
+        in
+        let test_shrink = List.rev next @ prev' in
+        save
+          output_dir
+          (filename_base ^ "_test.c")
+          (create_test_file
+             (ctx_to_tests test_shrink ^^ hardline ^^ string "return 123;")
+             filename_base
+             fun_decls);
+        let output, status = out_to_list (output_dir ^ "/run_tests.sh") in
+        match status with
+        | WEXITED 0 | WEXITED 1 ->
+          (match next with [] -> curr :: prev | h :: t -> shrink_h (curr :: prev, h, t))
+          (* indicating no more bug (which means that call was part of the cause, or compiler error)*)
+        | _ ->
+          let violation_line_num = get_violation_line output in
+          if
+            is_precond_violation
+              (drop (List.length src_code - violation_line_num) src_code)
+          then (
+            match next with [] -> curr :: prev | h :: t -> shrink_h (curr :: prev, h, t))
+          else (
+            match next with [] -> prev' | h :: t -> shrink_h (prev', h, t)))
     in
     let shrunken = shrink_h ([], start, seq) in
-    (List.length seq - List.length shrunken, ctx_to_tests shrunken)
+    (max 0 (List.length seq - List.length shrunken), ctx_to_tests shrunken)
 
 
 let rec gen_sequence
@@ -377,7 +388,7 @@ let rec gen_sequence
             (None, prev) (* attempted to use fresh_cn but did not work for some reason?*)
           | _ -> (Some (Sym.fresh_named ("x" ^ string_of_int prev)), prev + 1)
         in
-        let args = List.map (gen_arg ctx) params in
+        let args = List.map (fun ((_, ty) as param) -> (ty, gen_arg ctx param)) params in
         let curr_test = test_to_doc name ret_ty f args in
         save
           output_dir
@@ -476,7 +487,8 @@ let rec gen_sequence
               shrink ctx' output_dir filename_base src_code fun_decls
             in
             Either.Left
-              (seq_so_far ^^ hardline ^^ string "return 123;", { stats with discarded; failures = stats.failures + 1 }))))
+              ( seq_so_far ^^ hardline ^^ string "return 123;",
+                { stats with discarded; failures = stats.failures + 1 } ))))
 
 
 let compile_sequence
