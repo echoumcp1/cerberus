@@ -126,6 +126,7 @@ let with_well_formedness_check
   ~incl_dirs
   ~incl_files
   ~coq_export_file
+  ~coq_proof_log
   ~csv_times
   ~log_times
   ~astprints
@@ -168,14 +169,21 @@ let with_well_formedness_check
           prog
       in
       print_log_file ("mucore", MUCORE prog5);
-      Option.iter
-        (fun path -> Pp.print_file path (Pp_mucore_coq.pp_unit_file prog5))
-        coq_export_file;
       let paused =
         Typing.run_to_pause Context.empty (Check.check_decls_lemmata_fun_specs prog5)
       in
       Result.iter_error handle_error (Typing.pause_to_result paused);
-      f ~cabs_tunit ~prog5 ~ail_prog ~statement_locs ~paused
+      let@ _ = f ~cabs_tunit ~prog5 ~ail_prog ~statement_locs ~paused in
+      let steps = Prooflog.get_proof_log () in
+      Option.iter
+        (fun path ->
+          Pp.print_file
+            path
+            (Pp_mucore_coq.pp_unit_file_with_resource_inference
+               prog5
+               (if coq_proof_log then Some steps else None)))
+        coq_export_file;
+      return ()
     in
     Pp.maybe_close_times_channel ();
     Result.fold ~ok:(fun () -> exit 0) ~error:handle_error result
@@ -251,6 +259,7 @@ let well_formed
     ~incl_dirs
     ~incl_files
     ~coq_export_file:None
+    ~coq_proof_log:false
     ~csv_times
     ~log_times
     ~astprints
@@ -277,6 +286,7 @@ let verify
   diag
   lemmata
   coq_export_file
+  coq_proof_log
   only
   skip
   csv_times
@@ -319,17 +329,20 @@ let verify
   Diagnostics.diag_string := diag;
   WellTyped.use_ity := not no_use_ity;
   Resource.disable_resource_derived_constraints := disable_resource_derived_constraints;
+  (* Set the prooflog flag based on --coq-proof-log *)
+  Prooflog.set_enabled coq_proof_log;
   with_well_formedness_check (* CLI arguments *)
     ~filename
     ~macros
     ~incl_dirs
     ~incl_files
     ~coq_export_file
+    ~coq_proof_log
     ~csv_times
     ~log_times
     ~astprints
     ~no_inherit_loc
-    ~magic_comment_char_dollar (* Callbacks *)
+    ~magic_comment_char_dollar
     ~handle_error:(handle_type_error ~json ?output_dir ~serialize_json:json_trace)
     ~f:(fun ~cabs_tunit:_ ~prog5:_ ~ail_prog:_ ~statement_locs:_ ~paused ->
       let check (functions, global_var_constraints, lemmas) =
@@ -392,6 +405,8 @@ let generate_executable_specs
     output_decorated
   output_decorated_dir
   without_ownership_checking
+  without_loop_invariants
+  with_loop_leak_checks
   with_test_gen
   copy_source_dir
   =
@@ -418,6 +433,7 @@ let generate_executable_specs
     ~incl_dirs
     ~incl_files
     ~coq_export_file:None
+    ~coq_proof_log:false
     ~csv_times
     ~log_times
     ~astprints
@@ -430,6 +446,8 @@ let generate_executable_specs
           (try
              Executable_spec.main
                ~without_ownership_checking
+               ~without_loop_invariants
+               ~with_loop_leak_checks
                ~with_test_gen
                ~copy_source_dir
                filename
@@ -459,6 +477,10 @@ let run_seq_tests
   magic_comment_char_dollar
   (* Executable spec *)
     without_ownership_checking
+<<<<<<< HEAD
+=======
+  (* without_loop_invariants *)
+>>>>>>> master
   (* Test Generation *)
     output_dir
   with_static_hack
@@ -482,6 +504,10 @@ let run_seq_tests
     ~incl_files
     ~csv_times
     ~coq_export_file:None
+<<<<<<< HEAD
+=======
+    ~coq_proof_log:false
+>>>>>>> master
     ~log_times
     ~astprints
     ~no_inherit_loc
@@ -510,6 +536,11 @@ let run_seq_tests
           Cn_internal_to_ail.augment_record_map (BaseTypes.Record []);
           Executable_spec.main
             ~without_ownership_checking
+<<<<<<< HEAD
+=======
+            ~without_loop_invariants:true
+            ~with_loop_leak_checks:false
+>>>>>>> master
             ~with_test_gen:true
             ~copy_source_dir:false
             filename
@@ -547,6 +578,7 @@ let run_tests
   magic_comment_char_dollar
   (* Executable spec *)
     without_ownership_checking
+  (* without_loop_invariants *)
   (* Test Generation *)
     output_dir
   only
@@ -595,6 +627,7 @@ let run_tests
     ~incl_files
     ~csv_times
     ~coq_export_file:None
+    ~coq_proof_log:false
     ~log_times
     ~astprints
     ~no_inherit_loc
@@ -647,6 +680,8 @@ let run_tests
           (try
              Executable_spec.main
                ~without_ownership_checking
+               ~without_loop_invariants:true
+               ~with_loop_leak_checks:false
                ~with_test_gen:true
                ~copy_source_dir:false
                filename
@@ -905,6 +940,16 @@ module Executable_spec_flags = struct
     Arg.(value & flag & info [ "without-ownership-checking" ] ~doc)
 
 
+  let without_loop_invariants =
+    let doc = "Disable checking of loop invariants within CN runtime testing" in
+    Arg.(value & flag & info [ "without-loop-invariants" ] ~doc)
+
+
+  let with_loop_leak_checks =
+    let doc = "Enable leak checking across all runtime loop invariants" in
+    Arg.(value & flag & info [ "with-loop-leak-checks" ] ~doc)
+
+
   let with_test_gen =
     let doc =
       "Generate CN executable specifications in the correct format for feeding into \n\
@@ -930,6 +975,12 @@ module CoqExport_flags = struct
   let coq_export =
     let doc = "export to coq" in
     Arg.(value & opt (some string) None & info [ "coq-export-file" ] ~docv:"FILE" ~doc)
+end
+
+module CoqProofLog_flags = struct
+  let coq_proof_log =
+    let doc = "include proof log in coq export" in
+    Arg.(value & flag & info [ "coq-proof-log" ] ~docv:"FILE" ~doc)
 end
 
 let wf_cmd =
@@ -980,6 +1031,7 @@ let verify_t : unit Term.t =
   $ Verify_flags.diag
   $ Lemma_flags.lemmata
   $ CoqExport_flags.coq_export
+  $ CoqProofLog_flags.coq_proof_log
   $ Verify_flags.only
   $ Verify_flags.skip
   $ Common_flags.csv_times
@@ -1403,6 +1455,8 @@ let instrument_cmd =
     $ Executable_spec_flags.output_decorated
     $ Executable_spec_flags.output_decorated_dir
     $ Executable_spec_flags.without_ownership_checking
+    $ Executable_spec_flags.without_loop_invariants
+    $ Executable_spec_flags.with_loop_leak_checks
     $ Executable_spec_flags.with_test_gen
     $ Executable_spec_flags.copy_source_dir
   in
