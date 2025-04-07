@@ -477,10 +477,7 @@ let run_seq_tests
   magic_comment_char_dollar
   (* Executable spec *)
     without_ownership_checking
-<<<<<<< HEAD
-=======
   (* without_loop_invariants *)
->>>>>>> master
   (* Test Generation *)
     output_dir
   with_static_hack
@@ -504,10 +501,7 @@ let run_seq_tests
     ~incl_files
     ~csv_times
     ~coq_export_file:None
-<<<<<<< HEAD
-=======
     ~coq_proof_log:false
->>>>>>> master
     ~log_times
     ~astprints
     ~no_inherit_loc
@@ -536,11 +530,8 @@ let run_seq_tests
           Cn_internal_to_ail.augment_record_map (BaseTypes.Record []);
           Executable_spec.main
             ~without_ownership_checking
-<<<<<<< HEAD
-=======
             ~without_loop_invariants:true
             ~with_loop_leak_checks:false
->>>>>>> master
             ~with_test_gen:true
             ~copy_source_dir:false
             filename

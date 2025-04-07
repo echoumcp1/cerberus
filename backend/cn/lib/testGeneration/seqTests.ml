@@ -76,7 +76,7 @@ let calc_score (ctx : context) (args : (Sym.t * C.ctype) list) : int =
   List.fold_left
     (fun acc (_, ty) ->
       if List.exists (fun (_, ct, _, _) -> ty_eq ty ct) ctx then
-        acc + 10
+        acc + 25
       else
         acc)
     1
@@ -85,7 +85,7 @@ let calc_score (ctx : context) (args : (Sym.t * C.ctype) list) : int =
 
 let ctx_to_string (ctx : context) : string =
   List.fold_left
-    (fun acc (name, ty, f, _) ->
+    (fun acc (name, ty, f, args) ->
       match name with
       | Some name ->
         acc
@@ -93,8 +93,20 @@ let ctx_to_string (ctx : context) : string =
         ^ Sym.pp_string name
         ^ ":"
         ^ CF.String_core_ctype.string_of_ctype ty
+        ^ ":"
+        ^ Sym.pp_string f
+        ^ ":"
+        ^ List.fold_left (fun acc (_, arg) -> arg ^ "," ^ acc) "" args
         ^ ")"
-      | None -> acc ^ "(void:" ^ Sym.pp_string f ^ ")")
+        ^ "\n"
+      | None ->
+        acc
+        ^ "(void:"
+        ^ Sym.pp_string f
+        ^ ":"
+        ^ List.fold_left (fun acc (_, arg) -> arg ^ "," ^ acc) "" args
+        ^ ")"
+        ^ "\n")
     "\n"
     ctx
 
@@ -267,14 +279,12 @@ let shrink
   =
   let open Pp in
   let name_eq (n1, _, _, _) (n2, _, _, _) =
-    match (n1, n2) with
-    | Some name1, Some name2 -> String.equal (Sym.pp_string name1) (Sym.pp_string name2)
-    | _ -> false
+    match (n1, n2) with Some name1, Some name2 -> Sym.equal name1 name2 | _ -> false
   in
   match seq with
   | [] -> (0, empty)
-  | start :: seq ->
-    let rec dfs (visited : context) ((_, _, _, args) as node) : context =
+  | start :: seq as seq' ->
+    let rec dfs (graph : context) (visited : context) ((_, _, _, args) as node) : context =
       if not (List.mem name_eq node visited) then (
         let names = List.map (fun (_, name) -> name) args in
         let succs =
@@ -283,31 +293,73 @@ let shrink
               match name with
               | None -> false
               | Some name -> List.mem String.equal (Sym.pp_string name) names)
-            seq
+            graph
         in
-        List.fold_left dfs (node :: visited) succs)
+        List.fold_left (dfs seq) (node :: visited) succs)
       else
         visited
     in
-    let reqs = dfs [] start in
-    let rec shrink_h ((prev, ((name, _, _, _) as curr), next) : context * call * context) =
+    let rev_dep_graph =
+      List.map
+        (fun (name, ret_ty, f, _) ->
+          ( name,
+            ret_ty,
+            f,
+            match name with
+            | None -> []
+            | Some name ->
+              List.filter_map
+                (fun (name, ret_ty, _, _) ->
+                  match name with
+                  | None -> None
+                  | Some name -> Some (ret_ty, Sym.pp_string name))
+                (List.filter
+                   (fun (_, _, _, args) ->
+                     List.mem
+                       (fun name (_, var) -> String.equal (Sym.pp_string name) var)
+                       name
+                       args)
+                   seq') ))
+        seq'
+    in
+    (* print_string ((ctx_to_string rev_dep_graph) ^ "\n"); *)
+    let reqs = dfs seq [] start in
+    let rec shrink_1 ((prev, ((name, _, _, _) as curr), next) : context * call * context) =
       if List.mem name_eq curr reqs then (
-        match next with [] -> curr :: prev | h :: t -> shrink_h (curr :: prev, h, t))
+        match next with [] -> curr :: prev | h :: t -> shrink_1 (curr :: prev, h, t))
       else (
         let prev' =
           match name with
           | Some name ->
+            let removed =
+              List.filter_map
+                (fun (name, _, _, _) ->
+                  match name with None -> None | Some name -> Some (Sym.pp_string name))
+                (dfs
+                   rev_dep_graph
+                   []
+                   (List.find (name_eq (Some name, 0, 0, 0)) rev_dep_graph))
+            in
+            (* print_string ((Sym.pp_string name) ^ ":" ^ (List.fold_left (fun acc x -> acc ^ "," ^ x) "" removed) ^ "\n"); *)
             List.filter
-              (fun (_, _, _, args) ->
-                not
-                  (List.mem
-                     (fun name (_, var) -> String.equal (Sym.pp_string name) var)
-                     name
-                     args))
+              (fun ((name, _, _, args) : call) ->
+                List.for_all
+                  (fun (_, arg_name) -> not (List.mem String.equal arg_name removed))
+                  args
+                &&
+                match name with
+                | None -> true
+                | Some name ->
+                  not
+                    (List.mem
+                       (fun name var -> String.equal (Sym.pp_string name) var)
+                       name
+                       removed))
               prev
           | None -> prev
         in
         let test_shrink = List.rev next @ prev' in
+        (* print_string ((ctx_to_string test_shrink) ^ "\n"); *)
         save
           output_dir
           (filename_base ^ "_test.c")
@@ -318,20 +370,140 @@ let shrink
         let output, status = out_to_list (output_dir ^ "/run_tests.sh") in
         match status with
         | WEXITED 0 | WEXITED 1 ->
-          (match next with [] -> curr :: prev | h :: t -> shrink_h (curr :: prev, h, t))
-          (* indicating no more bug (which means that call was part of the cause, or compiler error)*)
+          (match next with [] -> curr :: prev | h :: t -> shrink_1 (curr :: prev, h, t))
+          (* indicating no more bug (which means that call was part of the cause, or compiler error)
+             6 is a CN error
+          *)
         | _ ->
           let violation_line_num = get_violation_line output in
           if
             is_precond_violation
               (drop (List.length src_code - violation_line_num) src_code)
           then (
-            match next with [] -> curr :: prev | h :: t -> shrink_h (curr :: prev, h, t))
+            match next with [] -> curr :: prev | h :: t -> shrink_1 (curr :: prev, h, t))
           else (
-            match next with [] -> prev' | h :: t -> shrink_h (prev', h, t)))
+            match next with [] -> prev' | h :: t -> shrink_1 (prev', h, t)))
     in
-    let shrunken = shrink_h ([], start, seq) in
-    (max 0 (List.length seq - List.length shrunken), ctx_to_tests shrunken)
+    let rec shrink_2 ((prev, next) : context * context) : context =
+      let shrink_arg ((ty, arg_name) : C.ctype * string) : string list =
+        let gen_lst_shrinks (ty : C.ctype) (arg : string) : string list =
+          match ty with
+          | Ctype (_, ty1) ->
+            (match ty1 with
+             | Basic (Integer (Signed _)) | Basic (Integer (Unsigned _)) ->
+               let gend_int = int_of_string arg in
+               List.map
+                 string_of_int
+                 (List.sort_uniq
+                    (fun i1 i2 -> Int.compare (abs i1) (abs i2))
+                    [ 0; 1; -1; -gend_int / 4; gend_int / 4; -gend_int / 2; gend_int / 2 ])
+             | Basic (Floating _) ->
+               let gend_float = float_of_string arg in
+               List.map
+                 string_of_float
+                 (List.sort_uniq
+                    (fun f1 f2 -> Float.compare (abs_float f1) (abs_float f2))
+                    [ 0.0; 1.0; -1.0; gend_float /. -4.0; gend_float /. 4.0; gend_float /. -2.0; gend_float /. 2.0 ])
+             | _ -> [])
+        in
+        let gend_val =
+          if String.starts_with ~prefix:"x" arg_name then (
+            match ty with
+            | Ctype (_, ty1) ->
+              (match ty1 with
+               | Basic (Integer Char) ->
+                 Some ("\'" ^ String.make 1 (char_of_int (Random.int 96 + 32)) ^ "\'")
+               | Basic (Integer Bool) ->
+                 Some (if Random.int 2 = 1 then "true" else "false")
+               | Basic (Integer (Signed _)) ->
+                 let rand_int = Random.int 32767 in
+                 Some
+                   (string_of_int (if Random.int 2 = 1 then rand_int * -1 else rand_int))
+               | Basic (Integer (Unsigned _)) -> Some (string_of_int (Random.int 65536))
+               | Basic (Floating _) -> Some (string_of_float (Random.float 65536.0))
+               | _ -> None))
+          else
+            None
+        in
+        match gend_val with
+        | Some v ->
+          gen_lst_shrinks ty v @ [ v; arg_name ] (* generate arg for variable, then shrink *)
+        | None -> gen_lst_shrinks ty arg_name @ [arg_name]
+        (* if arg is not a variable then just shrink *)
+      in
+      match next with
+      | [] -> List.rev prev
+      | ((name, ret_ty, f, args) as curr) :: t ->
+        let shrinks = List.map shrink_arg args in
+        (match shrinks with
+         | [] -> shrink_2 (curr :: prev, t)
+         | poss_args ->
+           let rec shrink_args
+             (poss_args : string list list)
+             ((prev_args, next_args) : (C.ctype * string) list * (C.ctype * string) list)
+             =
+             let rec try_shrinks
+               (arg_shrinks : string list)
+               =
+               let try_shrink
+                 (shrinks : string list)
+                 ((prev_args, next_args) : (C.ctype * string) list * (C.ctype * string) list)
+                 =
+                 match (shrinks, next_args) with
+                 | [], [] -> List.rev prev_args
+                 | shrink, (ty, arg) :: next_args ->
+                   (match shrink with
+                    | [] -> List.rev prev_args @ ((ty, arg) :: next_args)
+                    | new_arg :: _ -> List.rev prev_args @ ((ty, new_arg) :: next_args))
+                 | _, _ -> failwith "impossible"
+               in
+               match arg_shrinks with
+               | [] -> failwith
+                   "there will always be at least one possible arg (the original one)"
+               | orig_arg :: [] -> orig_arg
+               | new_arg :: rest ->
+                 let new_args = try_shrink arg_shrinks (prev_args, next_args) in
+                 let new_test = (name, ret_ty, f, new_args) in
+                 let test_shrink = List.rev prev @ (new_test :: t) in
+                 save
+                   output_dir
+                   (filename_base ^ "_test.c")
+                   (create_test_file
+                      (ctx_to_tests test_shrink ^^ hardline ^^ string "return 123;")
+                      filename_base
+                      fun_decls);
+                 let output, status = out_to_list (output_dir ^ "/run_tests.sh") in
+                 (match status with
+                  | WEXITED 0 | WEXITED 1 ->
+                    try_shrinks rest
+                    (* indicating no more bug (which means that call was part of the cause, or compiler error)
+                       6 is a CN error
+                    *)
+                  | _ ->
+                    let violation_line_num = get_violation_line output in
+                    if
+                      is_precond_violation
+                        (drop (List.length src_code - violation_line_num) src_code)
+                    then
+                      try_shrinks rest
+                    else
+                      new_arg)
+             in
+             match (poss_args, next_args) with
+             | [], [] -> (name, ret_ty, f, List.rev prev_args)
+             | arg_shrinks :: rest, (ty, _) :: next_args ->
+               shrink_args rest ((ty, try_shrinks arg_shrinks) :: prev_args, next_args)
+             | _, _ -> failwith "poss_args and next must have same length"
+           in
+           let shrunken_call = shrink_args poss_args ([], args) in
+           shrink_2 (shrunken_call :: prev, t))
+    in
+    let shrunken = shrink_1 ([], start, seq) in
+    let shrunken' = List.rev (shrink_2 ([], shrunken)) in
+    let shrunken'' = shrink_1 ([], List.hd shrunken', List.tl shrunken') in
+    (* print_string (ctx_to_string shrunken''); *)
+    (* print_string (Printf.sprintf "%d %d\n" (List.length seq') (List.length shrunken'')); *)
+    (max 0 (List.length seq' - List.length shrunken''), ctx_to_tests shrunken'')
 
 
 let rec gen_sequence
@@ -377,10 +549,10 @@ let rec gen_sequence
       ((f, ((_, ret_ty), params)) :
         Sym.t * ((C.qualifiers * C.ctype) * (Sym.t * C.ctype) list))
       (retries_left : int)
-      : context * int * (document, string * document) Either.either
+      : context * int * (string, string * document) Either.either
       =
       if retries_left = 0 then
-        (ctx, prev, Either.Left empty)
+        (ctx, prev, Either.Left "")
       else (
         let name, prev =
           match ret_ty with
@@ -411,16 +583,12 @@ let rec gen_sequence
             ( ctx',
               prev,
               Either.Left
-                (string
-                   (Printf.sprintf
-                      "/* violation of post-condition at line number %d in %s detected \
-                       on this call: */"
-                      violation_line_num
-                      (filename_base ^ ".c"))
-                 ^^ hardline
-                 ^^ curr_test
-                 ^^ hardline
-                 ^^ string "return 123;") ))
+                (Printf.sprintf
+                   "//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\
+                    //violation of post-condition at line number %d in %s detected on \
+                    this call"
+                   violation_line_num
+                   (filename_base ^ ".c")) ))
     in
     (match List.length fs with
      | 0 ->
@@ -470,7 +638,7 @@ let rec gen_sequence
             src_code
             fun_decls
         | ctx', prev, Either.Left err ->
-          if is_empty err then
+          if String.compare err "" = 0 then
             gen_sequence
               funcs
               (n - 1)
@@ -486,8 +654,11 @@ let rec gen_sequence
             let discarded, seq_so_far =
               shrink ctx' output_dir filename_base src_code fun_decls
             in
+            (* Either.Left
+              ( string "/*" ^^ ctx_to_tests (List.rev ctx') ^^ string "*/" ^^ hardline ^^ seq_so_far ^^ hardline ^^ string "return 123;",
+                { stats with discarded; failures = stats.failures + 1 } )))) *)
             Either.Left
-              ( seq_so_far ^^ hardline ^^ string "return 123;",
+              ( seq_so_far ^^ string err ^^ hardline ^^ string "return 123;",
                 { stats with discarded; failures = stats.failures + 1 } ))))
 
 
@@ -577,15 +748,15 @@ let generate
       ( 123,
         seq,
         Printf.sprintf
-          "Stats for nerds:\n\
+          "============================================\n\n\
+           Stats for nerds:\n\
            %d tests succeeded\n\
            POST-CONDITION VIOLATION DETECTED.\n\
-           %d tests discarded after shrinking.\n\
-           See %s/%s for details"
+           %d tests discarded after shrinking. (%.2f%% reduction)\n\n\
+           ============================================"
           stats.successes
           stats.discarded
-          output_dir
-          test_file )
+          ((float_of_int stats.discarded) /. (float_of_int (stats.successes + 1)) *. 100.0))
     | Right (seq, stats) ->
       let num_tests = List.fold_left (fun acc (_, num) -> acc + num) 0 stats.distrib in
       let distrib_to_str =
@@ -606,10 +777,12 @@ let generate
       ( 0,
         seq,
         Printf.sprintf
-          "Stats for nerds:\n\
+          "============================================\n\n\
+           Stats for nerds:\n\
            passed: %d, failed: %d, skipped: %d\n\
            Distribution of calls:\n\
-           %s"
+           %s\n\
+           ============================================"
           stats.successes
           stats.failures
           stats.skipped
